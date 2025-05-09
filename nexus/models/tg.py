@@ -1,45 +1,46 @@
-# /sd/tg/LeonidBot/models.py
-from psycopg2.extensions import JSONB
+# /sd/nexus/models/tg.py
 from sqlalchemy import Column, Integer, BigInteger, String, Date, Boolean, DateTime, Enum, ForeignKey
 from base import Base
 from datetime import datetime
 from enum import IntEnum, Enum as PyEnum
+from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import UniqueConstraint, CheckConstraint
 
-__mapper_args__ = {
-    "confirm_deleted_rows": False  # Для PostgreSQL
-}
+__mapper_args__ = {"confirm_deleted_rows": False}
 
 # ------------------------------
 # Перечисления (Enums)
 # ------------------------------
-class UserRole(IntEnum):  # Числовая иерархия ролей
-    ban = 0  # Запрещает доступ к боту
-    single = 1  # Только личные данные
-    multiplayer = 2  # Просмотр участников группы
-    moderator = 3  # Редактирование данных участников
-    admin = 4  # Полный доступ ко всем функциям
+class TelegramUserRole(IntEnum):
+    """Роли пользователей в Telegram-чатах"""
+    banned = 0          # Заблокирован
+    member = 1         # Обычный участник
+    admin = 2          # Администратор
+    creator = 3        # Создатель чата
 
-
-class GroupType(PyEnum):  # Типы групп и каналов
+class ChatType(PyEnum):
+    """Типы чатов в Telegram"""
     private = "private"
     public = "public"
     supergroup = "supergroup"
     channel = "channel"
 
-
-class ChannelType(PyEnum):
-    channel = "channel"
-    supergroup = "supergroup"
+class LogLevel(PyEnum):
+    """Уровни логирования"""
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    ERROR = "ERROR"
 
 # ------------------------------
-# TG профиль
+# Telegram-профиль
 # ------------------------------
 class TelegramProfile(Base):
     __tablename__ = 'telegram_profiles'
 
-    # Связь с аккаунтом
-    telegram_id = Column(BigInteger, ForeignKey("telegram_accounts.account_id"), primary_key=True)
-    user_id = Column(BigInteger, nullable=False)  # Уникальный ID пользователя в Telegram
+    # Уникальный ID профиля и ссылка на пользователя
+    id = Column(BigInteger, primary_key=True)  # Telegram ID (уникальный)
+    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False)  # Ссылка на пользователя
 
     # Данные из Bot API (доступны через aiogram)
     username = Column(String(32))  # Имя пользователя (если указано)
@@ -52,19 +53,17 @@ class TelegramProfile(Base):
 
     # Фотографии профиля (Bot API: get_user_profile_photos)
     avatar_thumbnail_url = Column(String(500))  # Ссылка на миниатюру аватара
-    avatar_small_file_id = Column(String(255))  # ID файла для загрузки маленького аватара
-    avatar_big_file_id = Column(String(255))  # ID файла для загрузки большого аватара
+    avatar_small_file_id = Column(String(255))  # ID файла для маленького аватара
+    avatar_big_file_id = Column(String(255))  # ID файла для большого аватара
 
-    # Данные из MTProto API (доступны через telethon/pyrogram)
-    bio = Column(String(500))  # Биография (доступна только для пользователей, разрешивших это)
-    phone_number = Column(String(20))  # Номер телефона (доступен только для контактов)
-    status = Column(String(50))  # Статус (online, offline, recently, last_week, last_month, long_time_ago)
-    last_seen = Column(DateTime)  # Последнее время активности (требует MTProto)
-    is_active = Column(Boolean, default=True)  # Активен ли пользователь (на основе последних сообщений)
+    # Данные из MTProto API (через telethon/pyrogram)
+    bio = Column(String(500))  # Биография
+    phone_number = Column(String(20))  # Номер телефона
+    status = Column(String(50))  # Статус (online, offline и т.д.)
+    last_seen = Column(DateTime)  # Последнее время активности
+    is_active = Column(Boolean, default=True)  # Активен ли пользователь
 
-    # Дополнительные данные (MTProto)
-    avatar_full_file_id = Column(String(255))  # Полный ID файла аватара (через MTProto)
-    avatar_full_url = Column(String(500))  # Прямая ссылка на полный аватар
+    # Дополнительные данные из MTProto
     mutual_contacts = Column(JSONB)  # Взаимные контакты (через MTProto)
     pinned_messages = Column(Integer, default=0)  # Количество закрепленных сообщений
     restrictions = Column(JSONB)  # Ограничения пользователя (например, блокировки)
@@ -73,82 +72,120 @@ class TelegramProfile(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # Связь с TelegramAccount  
-    account = relationship("TelegramAccount", back_populates="profile")
+    # Связь с Users
+    user = relationship("User", back_populates="tg_profiles")
 
-class User(Base):  # Пользователь
-    __tablename__ = 'users'
+    # Связь с чатами
+    chats = relationship("TelegramChat", secondary="chat_member", back_populates="participants")
 
-    id = Column(BigInteger, primary_key=True)
-    telegram_id = Column(BigInteger, unique=True, nullable=False)
-    username = Column(String(32))
-    first_name = Column(String(255), nullable=False)
-    last_name = Column(String(255))
-    language_code = Column(String(10))
-    is_premium = Column(Boolean, default=False)
-    full_display_name = Column(String(255))
-    email = Column(String(255))
-    phone = Column(String(20))
-    birthday = Column(Date)
-    role = Column(Integer, default=UserRole.single.value)  # Роль пользователя
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+# ------------------------------
+# Telegram-чаты (группы и каналы)
+# ------------------------------
+class TelegramChat(Base):
+    __tablename__ = 'telegram_chats'
 
+    # Уникальный ID чата и тип
+    id = Column(BigInteger, primary_key=True)  # Telegram ID чата
+    title = Column(String(255), nullable=False)  # Название
+    type = Column(Enum(ChatType), default=ChatType.private)  # Тип (private, supergroup, channel)
+    username = Column(String(32))  # Username чата (если есть)
 
-class Group(Base):  # Группа
-    __tablename__ = 'groups'
+    # Данные о владельце и участниках
+    owner_id = Column(BigInteger, ForeignKey("telegram_profiles.id"))  # ID владельца
+    participants = relationship("TelegramProfile", secondary="chat_member", back_populates="chats")
 
-    id = Column(BigInteger, primary_key=True)
-    telegram_id = Column(BigInteger, unique=True, nullable=False)  # ID группы в Telegram
-    title = Column(String(255), nullable=False)  # Название группы
-    type = Column(Enum(GroupType), default=GroupType.private)  # Тип группы
-    owner_id = Column(BigInteger, ForeignKey("users.telegram_id"))  # Создатель
+    # Основные параметры чата
     description = Column(String(500))  # Описание
-    participants_count = Column(Integer, default=0)  # Кол-во участников
+    invite_link = Column(String(500))  # Пригласительная ссылка
+    participants_count = Column(Integer, default=0)  # Количество участников
+    is_forum = Column(Boolean, default=False)  # Является ли форумом
+    has_protected_content = Column(Boolean, default=False)  # Защита контента
+    slow_mode_delay = Column(Integer, default=0)  # Задержка между сообщениями
+
+    # Дополнительные данные из MTProto
+    pinned_message = Column(String(500))  # Закрепленное сообщение
+    is_verified = Column(Boolean, default=False)  # Верифицирован ли чат
+    has_aggressive_anti_spam = Column(Boolean, default=False)  # Анти-спам включен
+    sticker_set_name = Column(String(255))  # Название стикерпака
+    custom_emoji_status = Column(String(255))  # Кастомный эмодзи-статус
+    restriction_reason = Column(String(500))  # Причина ограничения
+
+    # Фотографии чата (хранятся как JSONB)
+    photos = Column(JSONB)  # {"small_file_id": "...", "big_file_id": "...", "full_file_id": "..."}
+
+    # Сообщения чата (хранятся как JSONB)
+    messages = Column(JSONB)  # [{"message_id": 1, "text": "...", "pinned": true}, ...]
+
+    # Права администраторов (хранятся как JSONB)
+    admin_rights = Column(JSONB)  # {"can_manage_chat": true, "can_delete_messages": true, ...}
+
+    # Связь с владельцем
+    owner = relationship("TelegramProfile", foreign_keys=[owner_id])
+
+    # Системные поля
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+# ------------------------------
+# Связь пользователь-чат
+# ------------------------------
+class ChatMember(Base):
+    __tablename__ = 'chat_member'
 
-class Channel(Base):  # Канал
-    __tablename__ = 'channels'
+    # Связь профиль-чат
+    profile_id = Column(BigInteger, ForeignKey("telegram_profiles.id"), primary_key=True)
+    chat_id = Column(BigInteger, ForeignKey("telegram_chats.id"), primary_key=True)
 
-    id = Column(BigInteger, primary_key=True)
-    telegram_id = Column(BigInteger, unique=True, nullable=False)
-    title = Column(String(255), nullable=False)
-    type = Column(Enum(ChannelType), default=ChannelType.channel)
-    owner_id = Column(BigInteger, ForeignKey("users.telegram_id"))
-    username = Column(String(32))  # Имя канала
-    participants_count = Column(Integer, default=0)
-    description = Column(String(500))
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Роль и права
+    role = Column(Enum(TelegramUserRole), default=TelegramUserRole.member)
+    can_send_messages = Column(Boolean, default=False)
+    can_send_media = Column(Boolean, default=False)
+    can_restrict_members = Column(Boolean, default=False)
 
+    # Дополнительные данные
+    joined_at = Column(DateTime, default=datetime.utcnow)  # Дата присоединения
+    until_date = Column(DateTime)  # Дата истечения прав
 
-class UserGroup(Base):  # Связь пользователь-группа (многие ко многим)
-    __tablename__ = 'user_group'
+    # Связь с профилем и чатом
+    profile = relationship("TelegramProfile")
+    chat = relationship("TelegramChat")
 
-    user_id = Column(BigInteger, ForeignKey("users.telegram_id"), primary_key=True)
-    group_id = Column(BigInteger, ForeignKey("groups.telegram_id"), primary_key=True)
-    is_owner = Column(Boolean, default=False)
-    is_moderator = Column(Boolean, default=False)
-    joined_at = Column(DateTime, default=datetime.utcnow)
+    # Уникальность: один профиль не может быть участником одного чата дважды
+    __table_args__ = (UniqueConstraint('profile_id', 'chat_id'),)
 
-
-# Модели для логера:
-class LogLevel(PyEnum):
-    DEBUG = "DEBUG"
-    INFO = "INFO"
-    ERROR = "ERROR"
-
-
+# ------------------------------
+# Настройки логирования
+# ------------------------------
 class LogSettings(Base):
     __tablename__ = 'log_settings'
 
     id = Column(BigInteger, primary_key=True)
-    chat_id = Column(BigInteger, nullable=False)  # ID группы для логов
+    chat_id = Column(BigInteger, ForeignKey("telegram_chats.id"), nullable=False)  # ID чата для логов
     level = Column(Enum(LogLevel), default=LogLevel.ERROR)  # Уровень логирования
+
+    # Связь с чатом
+    chat = relationship("TelegramChat")
+
+    # Системные поля
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    def __repr__(self):
+        return f"<LogSettings(level='{self.level}', chat_id='{self.chat_id}')>"
 
-def __repr__(self):
-    return f"<LogSettings(level='{self.level}', chat_id='{self.chat_id}')>"
+# ------------------------------
+# Дополнительные данные о чате (необязательно, можно хранить в JSONB)
+# ------------------------------
+class ChatExtraData(Base):
+    __tablename__ = 'chat_extra_data'
+
+    chat_id = Column(BigInteger, ForeignKey("telegram_chats.id"), primary_key=True)
+    key = Column(String(50), primary_key=True)  # Например: "custom_emoji_status"
+    value = Column(String(255))  # Значение (можно хранить JSONB для сложных данных)
+
+    # Связь с чатом
+    chat = relationship("TelegramChat", back_populates="extra_data")
+
+    # Уникальность: один чат + один ключ → одно значение
+    __table_args__ = (UniqueConstraint('chat_id', 'key'),)
+
+TelegramChat.extra_data = relationship("ChatExtraData", back_populates="chat")
