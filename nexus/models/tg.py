@@ -1,11 +1,12 @@
 # /sd/nexus/models/tg.py
 from sqlalchemy import Column, Integer, BigInteger, String, Date, Boolean, DateTime, Enum, ForeignKey
-from base import Base
+from flask_appbuilder.models.sqla import Base
 from datetime import datetime
 from enum import IntEnum, Enum as PyEnum
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy import UniqueConstraint, CheckConstraint
+from sqlalchemy import UniqueConstraint
+from flask_appbuilder.security.sqla.models import User
 
 __mapper_args__ = {"confirm_deleted_rows": False}
 
@@ -40,7 +41,7 @@ class TelegramProfile(Base):
 
     # Уникальный ID профиля и ссылка на пользователя
     id = Column(BigInteger, primary_key=True)  # Telegram ID (уникальный)
-    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False)  # Ссылка на пользователя
+    user_id = Column(BigInteger, ForeignKey("ab_user.id"), nullable=False)  # Ссылка на пользователя
 
     # Данные из Bot API (доступны через aiogram)
     username = Column(String(32))  # Имя пользователя (если указано)
@@ -73,7 +74,7 @@ class TelegramProfile(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Связь с Users
-    user = relationship("User", back_populates="tg_profiles")
+    user = relationship("User")
 
     # Связь с чатами
     chats = relationship("TelegramChat", secondary="chat_member", back_populates="participants")
@@ -147,8 +148,8 @@ class ChatMember(Base):
     until_date = Column(DateTime)  # Дата истечения прав
 
     # Связь с профилем и чатом
-    profile = relationship("TelegramProfile")
-    chat = relationship("TelegramChat")
+    profile = relationship("TelegramProfile", overlaps="chats,participants")
+    chat = relationship("TelegramChat", overlaps="chats,participants")
 
     # Уникальность: один профиль не может быть участником одного чата дважды
     __table_args__ = (UniqueConstraint('profile_id', 'chat_id'),)

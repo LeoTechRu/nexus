@@ -1,16 +1,33 @@
-# This is a sample Python script.
+# /sd/nexus/main.py
+import argparse
+import threading
+import asyncio
+from web.app import app
+from bot.main import run_bot
 
-# Press Shift+F10 to execute it or replace it with your code.
-# Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
+def start_flask():
+    app.run(host="0.0.0.0", port=8000)
 
+def start_bot():
+    asyncio.run(run_bot())
 
-def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press Ctrl+F8 to toggle the breakpoint.
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Запуск компонентов Nexus")
+    parser.add_argument("--flask", action="store_true", help="Запустить только Flask")
+    parser.add_argument("--bot", action="store_true", help="Запустить только бота")
+    args = parser.parse_args()
 
+    # Запуск всех модулей без флагов
+    if not args.flask and not args.bot:
+        print("Запуск Flask и Telegram-бота...")
+        flask_thread = threading.Thread(target=start_flask, daemon=True)
+        flask_thread.start()
+        asyncio.run(run_bot())
 
-# Press the green button in the gutter to run the script.
-if __name__ == '__main__':
-    print_hi('PyCharm')
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
+    # Запуск отдельных модулей
+    elif args.flask:
+        print("Запуск Flask...")
+        start_flask()
+    elif args.bot:
+        print("Запуск Telegram-бота...")
+        start_bot()
