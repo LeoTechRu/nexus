@@ -8,8 +8,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from datetime import datetime
 from typing import Callable
-from decorators import role_required, group_required
-from models import User, GroupType, LogLevel, UserRole
+from decorators import role_required
+from models import GroupType, LogLevel, UserRole
 from services.telegram import UserService
 
 # ==============================
